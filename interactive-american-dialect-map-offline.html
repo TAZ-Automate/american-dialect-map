@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Interactive American Dialect Map</title>
+<style>
+:root {
+ --bg:#f4f2ee; --card:#fff; --text:#1f2933; --muted:#66737f; --accent:#5f7184;
+ --line:#d8dde2; --soft:#e9edf0; --dark:#324250;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; min-height:100%; background:var(--bg); color:var(--text);
+ font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+body { padding-bottom:max(24px,env(safe-area-inset-bottom)); }
+header { max-width:1180px; margin:auto; padding:24px 18px 10px; }
+h1 { margin:0 0 8px; font:600 clamp(27px,5vw,44px)/1.08 Georgia,serif; }
+.subtitle { color:var(--muted); line-height:1.5; max-width:850px; }
+.grid { max-width:1180px; margin:auto; padding:12px 18px 30px; display:grid;
+ grid-template-columns:minmax(300px,.9fr) minmax(390px,1.25fr); gap:18px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:18px;
+ box-shadow:0 8px 28px rgba(31,41,51,.06); }
+.quiz { padding:20px; min-height:520px; display:flex; flex-direction:column; }
+.progressrow { display:flex; justify-content:space-between; color:var(--muted); font-size:14px; }
+.progress { height:8px; margin-top:10px; border-radius:99px; background:var(--soft); overflow:hidden; }
+.progress div { height:100%; width:0; background:var(--accent); transition:width .25s; }
+.question { font:600 23px/1.28 Georgia,serif; margin:24px 0 16px; }
+.answers { display:grid; gap:9px; }
+.answer { width:100%; text-align:left; border:1px solid var(--line); background:#fff;
+ border-radius:12px; padding:13px 14px; font-size:15px; color:var(--text); cursor:pointer; }
+.answer:active,.answer.selected { border-color:var(--dark); background:#eef2f4; }
+.controls { margin-top:auto; display:flex; justify-content:space-between; gap:10px; padding-top:20px; }
+.control { border:0; border-radius:10px; padding:11px 14px; font-size:15px; cursor:pointer;
+ background:var(--dark); color:#fff; }
+.control.secondary { background:var(--soft); color:var(--text); }
+.control:disabled { opacity:.4; }
+.mapcard { padding:16px; }
+.map-title { margin:2px 0 4px; font-size:17px; }
+.map-sub { color:var(--muted); font-size:13px; margin-bottom:12px; }
+#tilemap { display:grid; grid-template-columns:repeat(12,minmax(25px,1fr)); gap:5px;
+ width:100%; align-items:stretch; }
+.tile { aspect-ratio:1; border-radius:7px; display:flex; align-items:center; justify-content:center;
+ font-size:clamp(8px,1.4vw,12px); font-weight:700; border:1px solid rgba(50,66,80,.12);
+ color:#253340; transition:background .25s,color .25s,transform .15s; }
+.tile:hover { transform:scale(1.06); }
+.empty { visibility:hidden; }
+.legend { display:flex; align-items:center; gap:8px; margin:13px 0 18px; color:var(--muted); font-size:12px; }
+.legendbar { height:10px; flex:1; border-radius:99px;
+ background:linear-gradient(90deg,#edf0f2,#cbd4dc,#9bacba,#6c8193,#324250); }
+.top { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.place { padding:11px; border-radius:12px; background:#f3f5f6; min-height:78px; }
+.place strong { display:block; font-size:13px; }
+.place span { color:var(--muted); font-size:12px; }
+.note { max-width:1180px; margin:0 auto 25px; padding:0 18px; color:var(--muted);
+ font-size:13px; line-height:1.5; }
+.status { display:none; padding:10px 12px; margin-bottom:12px; border-radius:10px;
+ background:#fff3cd; color:#5d4a00; font-size:13px; }
+@media(max-width:820px) {
+ .grid { grid-template-columns:1fr; padding:8px 12px 24px; }
+ header { padding:20px 14px 8px; }
+ .quiz { min-height:500px; }
+ .mapcard { padding:12px; }
+ #tilemap { gap:4px; }
+ .top { grid-template-columns:1fr; }
+ .place { min-height:0; }
+}
+</style>
+</head>
+<body>
+<header>
+<h1>Where Does Your American Dialect Point?</h1>
+<div class="subtitle">Answer one question at a time. The map updates after every response to show where your vocabulary and pronunciation choices are most geographically characteristic.</div>
+</header>
+
+<main class="grid">
+<section class="card quiz">
+<div id="status" class="status"></div>
+<div class="progressrow"><span id="count"></span><span id="answered"></span></div>
+<div class="progress"><div id="bar"></div></div>
+<div id="question" class="question">Loading question…</div>
+<div id="answers" class="answers"></div>
+<div class="controls">
+<button id="back" class="control secondary" type="button">Back</button>
+<button id="reset" class="control secondary" type="button">Reset</button>
+<button id="skip" class="control" type="button">Skip</button>
+</div>
+</section>
+
+<section class="card mapcard">
+<h2 class="map-title">Current geographic match</h2>
+<div class="map-sub">Darker states currently have stronger evidence.</div>
+<div id="tilemap"></div>
+<div class="legend"><span>Lower</span><div class="legendbar"></div><span>Higher</span></div>
+<div class="top" id="top"></div>
+</section>
+</main>
+
+<div class="note"><strong>Method:</strong> independent educational reconstruction using a transparent regional-weight model derived from well-known American dialect-survey items. It is not the proprietary New York Times scoring model. Dialect reflects linguistic influence and mobility, not necessarily birthplace.</div>
+
+<script>
+(function() {
+"use strict";
+const regions = {"New England": ["ME", "NH", "VT", "MA", "RI", "CT"], "New York City": ["NY", "NJ"], "Mid-Atlantic": ["PA", "DE", "MD", "DC"], "Inland North": ["OH", "MI", "IN", "IL", "WI"], "Upper Midwest": ["MN", "IA", "ND", "SD"], "Appalachia": ["WV", "KY", "TN"], "South Atlantic": ["VA", "NC", "SC", "GA", "FL"], "Deep South": ["AL", "MS", "LA", "AR"], "Texas": ["TX", "OK"], "Great Plains": ["NE", "KS", "MO"], "Mountain West": ["MT", "WY", "CO", "ID", "UT"], "Southwest": ["AZ", "NM", "NV"], "Pacific Northwest": ["WA", "OR", "AK"], "California": ["CA", "HI"]};
+const questions = [{"q": "What do you call a sweetened carbonated beverage?", "answers": [{"label": "Soda", "w": {"New England": 3, "New York City": 4, "Mid-Atlantic": 3, "California": 2, "Southwest": 1}}, {"label": "Pop", "w": {"Inland North": 4, "Upper Midwest": 4, "Great Plains": 2, "Mountain West": 1, "Pacific Northwest": 2}}, {"label": "Coke, regardless of brand", "w": {"Deep South": 5, "Texas": 4, "South Atlantic": 3, "Appalachia": 2}}, {"label": "Soft drink", "w": {"Texas": 1, "Deep South": 1, "South Atlantic": 1}}, {"label": "I use more than one of these", "w": {}}]}, {"q": "What do you call the long sandwich containing cold cuts, vegetables, and so on?", "answers": [{"label": "Sub", "w": {"New England": 3, "New York City": 2, "South Atlantic": 1, "California": 1}}, {"label": "Hoagie", "w": {"Mid-Atlantic": 5, "New York City": 1}}, {"label": "Hero", "w": {"New York City": 5}}, {"label": "Grinder", "w": {"New England": 5}}, {"label": "Po' boy", "w": {"Deep South": 5}}, {"label": "Italian sandwich / other", "w": {}}]}, {"q": "How do you address a group of two or more people?", "answers": [{"label": "You guys", "w": {"Inland North": 3, "Upper Midwest": 3, "New England": 2, "California": 2, "Pacific Northwest": 2}}, {"label": "Y'all", "w": {"Deep South": 5, "Texas": 5, "South Atlantic": 4, "Appalachia": 4}}, {"label": "Youse / youse guys", "w": {"New York City": 4, "Mid-Atlantic": 4}}, {"label": "You all", "w": {"South Atlantic": 2, "Mid-Atlantic": 1}}, {"label": "You lot / everyone / something else", "w": {}}]}, {"q": "What do you call the shoes worn for sports or everyday casual use?", "answers": [{"label": "Sneakers", "w": {"New England": 4, "New York City": 4, "Mid-Atlantic": 3}}, {"label": "Tennis shoes", "w": {"South Atlantic": 3, "Deep South": 3, "Texas": 3, "Great Plains": 2, "Southwest": 2}}, {"label": "Gym shoes", "w": {"Inland North": 5}}, {"label": "Running shoes / trainers / other", "w": {}}]}, {"q": "What do you call the small freshwater crustacean often used as bait or eaten?", "answers": [{"label": "Crawfish", "w": {"Deep South": 5, "Texas": 4}}, {"label": "Crayfish", "w": {"New England": 3, "New York City": 2, "Mid-Atlantic": 2, "California": 2}}, {"label": "Crawdad", "w": {"Appalachia": 4, "Great Plains": 3, "Mountain West": 3, "Southwest": 2}}, {"label": "Mudbug", "w": {"Deep South": 4}}, {"label": "I do not have a word for it", "w": {}}]}, {"q": "What do you call the strip of grass between the sidewalk and the street?", "answers": [{"label": "Tree lawn", "w": {"Inland North": 5}}, {"label": "Terrace", "w": {"Upper Midwest": 4, "Inland North": 2}}, {"label": "Parking strip", "w": {"Mountain West": 4, "Pacific Northwest": 3}}, {"label": "Devil strip", "w": {"Inland North": 5}}, {"label": "Boulevard", "w": {"Upper Midwest": 3}}, {"label": "The grass / no special term", "w": {}}]}, {"q": "What do you call a drinking fountain?", "answers": [{"label": "Water fountain", "w": {"New York City": 2, "Mid-Atlantic": 2, "South Atlantic": 2, "California": 2}}, {"label": "Drinking fountain", "w": {"Inland North": 2, "Great Plains": 2, "Mountain West": 2, "Pacific Northwest": 2}}, {"label": "Bubbler", "w": {"New England": 5, "Inland North": 4}}, {"label": "Other", "w": {}}]}, {"q": "What do you call a sale of unwanted household items held outside a home?", "answers": [{"label": "Garage sale", "w": {"Inland North": 3, "Upper Midwest": 3, "Great Plains": 3, "Mountain West": 2, "California": 2}}, {"label": "Yard sale", "w": {"New England": 2, "Mid-Atlantic": 3, "Appalachia": 3, "South Atlantic": 4, "Deep South": 3}}, {"label": "Tag sale", "w": {"New England": 5}}, {"label": "Rummage sale", "w": {"Upper Midwest": 4, "Inland North": 2}}, {"label": "Other", "w": {}}]}, {"q": "What do you call the road running alongside a highway for local access?", "answers": [{"label": "Frontage road", "w": {"Texas": 5, "Great Plains": 3, "Mountain West": 3, "Southwest": 3}}, {"label": "Service road", "w": {"New York City": 4, "Mid-Atlantic": 3, "South Atlantic": 2}}, {"label": "Access road", "w": {"New England": 2, "Pacific Northwest": 2, "California": 2}}, {"label": "Feeder road", "w": {"Texas": 5}}, {"label": "I do not use a special term", "w": {}}]}, {"q": "What do you call the circular intersection where traffic travels around a central island?", "answers": [{"label": "Rotary", "w": {"New England": 5}}, {"label": "Traffic circle", "w": {"New York City": 3, "Mid-Atlantic": 4, "South Atlantic": 2}}, {"label": "Roundabout", "w": {"Inland North": 2, "Upper Midwest": 2, "Mountain West": 3, "Pacific Northwest": 3, "California": 3}}, {"label": "Other / no distinction", "w": {}}]}, {"q": "How do you usually pronounce \u201cpecan\u201d?", "answers": [{"label": "puh-KAHN", "w": {"Deep South": 4, "Texas": 4, "South Atlantic": 3, "California": 1}}, {"label": "PEE-can", "w": {"Appalachia": 3, "Great Plains": 2, "Inland North": 2}}, {"label": "PEE-kahn", "w": {"New England": 2, "New York City": 2, "Mid-Atlantic": 2}}, {"label": "It varies", "w": {}}]}, {"q": "Are \u201ccot\u201d and \u201ccaught\u201d pronounced the same?", "answers": [{"label": "Yes, they sound the same", "w": {"California": 4, "Pacific Northwest": 4, "Mountain West": 4, "Southwest": 4, "Upper Midwest": 2}}, {"label": "No, they sound different", "w": {"New York City": 4, "New England": 4, "Mid-Atlantic": 3, "South Atlantic": 2}}, {"label": "I am not sure", "w": {}}]}, {"q": "Are \u201cpin\u201d and \u201cpen\u201d pronounced the same before a consonant?", "answers": [{"label": "Yes, usually", "w": {"Deep South": 5, "Texas": 5, "South Atlantic": 4, "Appalachia": 4}}, {"label": "No", "w": {"New England": 3, "New York City": 3, "Inland North": 3, "Upper Midwest": 3, "California": 2}}, {"label": "I am not sure", "w": {}}]}, {"q": "How do you pronounce the second-person possessive word \u201cyour\u201d?", "answers": [{"label": "Like \u201cyore\u201d", "w": {"New England": 2, "Mid-Atlantic": 2, "Inland North": 2, "Pacific Northwest": 2}}, {"label": "Like \u201cyer\u201d", "w": {"Upper Midwest": 2, "Great Plains": 2, "Mountain West": 2}}, {"label": "It varies by sentence", "w": {}}]}, {"q": "What do you call rain falling while the sun is shining?", "answers": [{"label": "Sunshower", "w": {"New York City": 4, "New England": 3, "Mid-Atlantic": 3}}, {"label": "The devil is beating his wife", "w": {"Deep South": 5, "South Atlantic": 4, "Appalachia": 3}}, {"label": "Monkey's wedding", "w": {"South Atlantic": 2}}, {"label": "I have no special term", "w": {}}]}, {"q": "What do you call an insect that glows at night?", "answers": [{"label": "Firefly", "w": {"New England": 3, "New York City": 3, "Mid-Atlantic": 3, "South Atlantic": 2}}, {"label": "Lightning bug", "w": {"Appalachia": 5, "Deep South": 4, "Texas": 3, "Great Plains": 2}}, {"label": "I use both", "w": {}}]}, {"q": "What do you call the remote control for a television?", "answers": [{"label": "Remote", "w": {"California": 2, "Pacific Northwest": 2, "Mountain West": 2, "Southwest": 2}}, {"label": "Clicker", "w": {"New England": 4, "Upper Midwest": 3}}, {"label": "Changer / channel changer", "w": {"Deep South": 3, "Appalachia": 2}}, {"label": "The controller / other", "w": {}}]}, {"q": "What do you call the night before Halloween?", "answers": [{"label": "Devil's Night", "w": {"Inland North": 5}}, {"label": "Mischief Night", "w": {"New York City": 4, "Mid-Atlantic": 5}}, {"label": "Cabbage Night", "w": {"New England": 4}}, {"label": "I have no special name for it", "w": {"California": 2, "Mountain West": 2, "Southwest": 2, "Pacific Northwest": 2}}]}, {"q": "What do you call a very light, brief rain?", "answers": [{"label": "Sprinkle", "w": {"Great Plains": 3, "Texas": 2, "Mountain West": 2, "Southwest": 2}}, {"label": "Drizzle", "w": {"New England": 2, "New York City": 2, "Pacific Northwest": 3, "California": 2}}, {"label": "Sunshower", "w": {"New York City": 2}}, {"label": "Other / no special distinction", "w": {}}]}, {"q": "What do you call the wheeled carrier used for groceries in a supermarket?", "answers": [{"label": "Shopping cart", "w": {"California": 3, "Mountain West": 3, "Southwest": 3, "Inland North": 2, "Pacific Northwest": 3}}, {"label": "Buggy", "w": {"Deep South": 5, "South Atlantic": 4, "Appalachia": 4}}, {"label": "Carriage", "w": {"New England": 5}}, {"label": "Wagon / basket / other", "w": {}}]}, {"q": "What do you call the evening meal?", "answers": [{"label": "Dinner", "w": {"New York City": 2, "Mid-Atlantic": 2, "California": 2, "Pacific Northwest": 2}}, {"label": "Supper", "w": {"Upper Midwest": 4, "Great Plains": 4, "Appalachia": 3, "Deep South": 3}}, {"label": "Either, depending on context", "w": {}}]}, {"q": "What do you call a paved path beside a street for pedestrians?", "answers": [{"label": "Sidewalk", "w": {"New England": 2, "New York City": 2, "Mid-Atlantic": 2, "California": 2}}, {"label": "Pavement", "w": {"New England": 1}}, {"label": "Footpath / walkway", "w": {}}]}, {"q": "What do you call the fixture that supplies water indoors?", "answers": [{"label": "Faucet", "w": {"New England": 3, "New York City": 3, "Mid-Atlantic": 3, "Inland North": 2}}, {"label": "Spigot", "w": {"Deep South": 3, "Appalachia": 3, "Texas": 3, "Great Plains": 2}}, {"label": "Tap", "w": {"Pacific Northwest": 2, "California": 2}}, {"label": "I distinguish these by fixture type", "w": {}}]}, {"q": "What do you call a knitted winter hat?", "answers": [{"label": "Beanie", "w": {"California": 4, "Southwest": 3, "Mountain West": 3, "Pacific Northwest": 3}}, {"label": "Knit cap / stocking cap", "w": {"Great Plains": 4, "Inland North": 3, "Upper Midwest": 3}}, {"label": "Toboggan", "w": {"Appalachia": 5, "Deep South": 4, "South Atlantic": 3}}, {"label": "Tuque", "w": {"Upper Midwest": 2}}, {"label": "Other", "w": {}}]}, {"q": "When waiting with other people, do you stand \u201cin line\u201d or \u201con line\u201d?", "answers": [{"label": "In line", "w": {"New England": 2, "Mid-Atlantic": 2, "Inland North": 2, "California": 2, "Texas": 2}}, {"label": "On line", "w": {"New York City": 6}}, {"label": "I use both", "w": {}}]}];
+const tiles = {"AK": [0, 0], "ME": [11, 0], "WI": [6, 1], "VT": [10, 1], "NH": [11, 1], "WA": [1, 2], "ID": [2, 2], "MT": [3, 2], "ND": [4, 2], "MN": [5, 2], "IL": [6, 2], "MI": [7, 2], "NY": [9, 2], "MA": [10, 2], "OR": [1, 3], "NV": [2, 3], "WY": [3, 3], "SD": [4, 3], "IA": [5, 3], "IN": [6, 3], "OH": [7, 3], "PA": [8, 3], "NJ": [9, 3], "CT": [10, 3], "RI": [11, 3], "CA": [1, 4], "UT": [2, 4], "CO": [3, 4], "NE": [4, 4], "MO": [5, 4], "KY": [6, 4], "WV": [7, 4], "VA": [8, 4], "MD": [9, 4], "DE": [10, 4], "AZ": [2, 5], "NM": [3, 5], "KS": [4, 5], "AR": [5, 5], "TN": [6, 5], "NC": [7, 5], "SC": [8, 5], "DC": [9, 5], "OK": [4, 6], "LA": [5, 6], "MS": [6, 6], "AL": [7, 6], "GA": [8, 6], "HI": [0, 7], "TX": [4, 7], "FL": [8, 7]};
+let index = 0;
+let responses = new Array(questions.length).fill(null);
+
+const byId = id => document.getElementById(id);
+const allStates = Object.keys(tiles);
+
+function regionForState(state) {
+  for (const region in regions) if (regions[region].includes(state)) return region;
+  return null;
+}
+
+function scores() {
+  const result = {};
+  Object.keys(regions).forEach(r => result[r] = 0);
+  responses.forEach((answerIndex, qi) => {
+    if (answerIndex === null || answerIndex === -1) return;
+    const answer = questions[qi].answers[answerIndex];
+    const weights = answer && answer.w ? answer.w : {};
+    Object.keys(weights).forEach(r => result[r] += Number(weights[r]) || 0);
+  });
+  return result;
+}
+
+function shade(value,max) {
+  if (!max || value <= 0) return "#edf0f2";
+  const t = value/max;
+  if (t < .2) return "#dfe5e9";
+  if (t < .4) return "#cbd4dc";
+  if (t < .6) return "#9bacba";
+  if (t < .8) return "#6c8193";
+  return "#324250";
+}
+
+function buildMap() {
+  const map = byId("tilemap");
+  map.innerHTML = "";
+  for (let row=0; row<8; row++) {
+    for (let col=0; col<12; col++) {
+      const state = allStates.find(s => tiles[s][0]===col && tiles[s][1]===row);
+      const cell = document.createElement("div");
+      if (!state) {
+        cell.className = "tile empty";
+      } else {
+        cell.className = "tile";
+        cell.id = "state-"+state;
+        cell.textContent = state;
+        cell.title = state;
+      }
+      map.appendChild(cell);
+    }
+  }
+}
+
+function updateMap() {
+  const s = scores();
+  const max = Math.max(1,...Object.values(s));
+  allStates.forEach(state => {
+    const region = regionForState(state);
+    const value = region ? s[region] : 0;
+    const el = byId("state-"+state);
+    if (el) {
+      el.style.background = shade(value,max);
+      el.style.color = value/max > .72 ? "#fff" : "#253340";
+      el.title = state + " — " + (region || "Unassigned") + " match score: " + value;
+    }
+  });
+  const ordered = Object.entries(s).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  const denom = ordered.reduce((sum,x)=>sum+x[1],0) || 1;
+  byId("top").innerHTML = ordered.map((x,i) =>
+    '<div class="place"><strong>'+(i+1)+'. '+x[0]+'</strong><span>'+
+    (x[1] ? Math.round(x[1]/denom*100) : 0)+'% of top-three evidence</span></div>'
+  ).join("");
+}
+
+function render() {
+  const answeredCount = responses.filter(x => x !== null).length;
+  byId("count").textContent = "Question "+(index+1)+" of "+questions.length;
+  byId("answered").textContent = answeredCount+" answered";
+  byId("bar").style.width = (answeredCount/questions.length*100)+"%";
+  byId("question").textContent = questions[index].q;
+  byId("answers").innerHTML = "";
+  questions[index].answers.forEach((answer, ai) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "answer" + (responses[index]===ai ? " selected" : "");
+    btn.textContent = answer.label;
+    btn.addEventListener("click", function() {
+      responses[index] = ai;
+      updateMap();
+      if (index < questions.length-1) index++;
+      render();
+    });
+    byId("answers").appendChild(btn);
+  });
+  byId("back").disabled = index === 0;
+  byId("skip").textContent = index === questions.length-1 ? "Finish" : "Skip";
+  updateMap();
+}
+
+byId("back").addEventListener("click", function() {
+  if (index > 0) index--;
+  render();
+});
+byId("skip").addEventListener("click", function() {
+  if (responses[index] === null) responses[index] = -1;
+  if (index < questions.length-1) index++;
+  render();
+});
+byId("reset").addEventListener("click", function() {
+  responses = new Array(questions.length).fill(null);
+  index = 0;
+  render();
+});
+
+try {
+  buildMap();
+  render();
+} catch (error) {
+  byId("status").style.display = "block";
+  byId("status").textContent = "The quiz could not start in this preview: " + error.message;
+  byId("question").textContent = "Please open this file in Safari or another full browser.";
+}
+})();
+</script>
+</body>
+</html>
